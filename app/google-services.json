@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "155889055913",
+    "project_id": "dmcc26",
+    "storage_bucket": "dmcc26.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:155889055913:android:6ad51bf4529a78ee0d91b8",
+        "android_client_info": {
+          "package_name": "com.dmcc26.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYnldaZYQkk5XI6Lwd6Dv1rqdY6RkD3gU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
