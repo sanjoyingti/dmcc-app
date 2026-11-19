@@ -1,0 +1,54 @@
+name: Build 26-DMCC APK
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "9.9.0"
+      - name: Firebase config from secret (optional)
+        env:
+          GS: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GS" ]; then echo "$GS" > app/google-services.json; echo "Using GOOGLE_SERVICES_JSON secret"; fi
+          if [ -f app/google-services.json ]; then echo "::notice::Firebase config found"; else echo "::warning::app/google-services.json not found - the app will show a setup screen"; fi
+      - name: Library versions (info)
+        continue-on-error: true
+        run: |
+          for p in com/google/firebase/firebase-bom io/getstream/stream-webrtc-android androidx/work/work-runtime-ktx; do
+            for base in https://repo1.maven.org/maven2 https://dl.google.com/dl/android/maven2; do
+              v=$(curl -fsS "$base/$p/maven-metadata.xml" 2>/dev/null | grep -o "<release>[^<]*" | sed 's/<release>//')
+              [ -n "$v" ] && echo "::notice::$p latest $v"
+            done
+          done
+      - name: Build debug APK
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace 2>&1 | tee build.log
+      - name: Report errors
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong|Could not resolve|Could not find|FAILURE" -A2 build.log | head -60 | while IFS= read -r l; do
+            echo "::error::${l//%/%25}"
+          done
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk 26-DMCC.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: 26-DMCC v1.0.${{ github.run_number }}
+          body: "versionCode=${{ github.run_number }}"
+          target_commitish: ${{ github.sha }}
+          files: 26-DMCC.apk
+          make_latest: true

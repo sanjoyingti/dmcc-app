@@ -1,0 +1,125 @@
+rules_version = '2';
+// 26-DMCC security rules. Paste into Firebase console > Firestore Database > Rules > Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function g(gid) { return get(/databases/$(database)/documents/groups/$(gid)).data; }
+    function gAfter(gid) { return getAfter(/databases/$(database)/documents/groups/$(gid)).data; }
+    function isMember(gid) { return signedIn() && me() in g(gid).memberIds; }
+    function isAdmin(gid) { return signedIn() && me() in g(gid).admins; }
+    function isAdminAfter(gid) { return signedIn() && me() in gAfter(gid).admins; }
+
+    match /config/{doc} { allow read: if signedIn(); }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && me() == uid;
+    }
+    match /phones/{p} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == me();
+      allow update, delete: if signedIn() && resource.data.uid == me();
+    }
+    match /emails/{e} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == me()
+        && request.auth.token.email != null && e == request.auth.token.email.lower();
+      allow update, delete: if signedIn() && resource.data.uid == me();
+    }
+
+    match /invites/{code} {
+      allow read: if signedIn();
+      allow create: if isAdminAfter(request.resource.data.groupId);
+      allow delete: if isAdmin(resource.data.groupId);
+    }
+
+    match /groups/{gid} {
+      // A group is visible only to its members.
+      allow read: if signedIn() && me() in resource.data.memberIds;
+      allow create: if signedIn() && request.resource.data.ownerId == me()
+        && request.resource.data.admins == [me()] && request.resource.data.memberIds == [me()];
+      allow update: if signedIn() && (
+        // administrators / sub-administrators manage the group (owner can't be changed)
+        (me() in resource.data.admins && request.resource.data.ownerId == resource.data.ownerId
+          && resource.data.ownerId in request.resource.data.admins
+          && resource.data.ownerId in request.resource.data.memberIds)
+        // join with an invite: only add yourself
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+          && request.resource.data.memberIds.toSet() == resource.data.memberIds.toSet().union([me()].toSet()))
+        // leave: only remove yourself
+        || (me() != resource.data.ownerId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'admins'])
+          && request.resource.data.memberIds.toSet() == resource.data.memberIds.toSet().difference([me()].toSet()))
+        // members update the chat preview
+        || (me() in resource.data.memberIds
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'lastAt']))
+      );
+      allow delete: if signedIn() && resource.data.ownerId == me();
+
+      match /members/{uid} {
+        allow read: if isMember(gid);
+        allow create, update: if isAdminAfter(gid)
+          || (uid == me() && me() in g(gid).memberIds && request.resource.data.role == 'member'
+              && request.resource.data.pccId == '' && request.resource.data.designation == 'Member');
+        allow delete: if isAdminAfter(gid) || uid == me();
+      }
+      match /private/{uid} {
+        // ID numbers and documents: administrators and the member only.
+        allow read: if isAdmin(gid) || (uid == me() && isMember(gid));
+        allow write: if isAdminAfter(gid) || (uid == me() && isMember(gid));
+      }
+      match /pccs/{pid} {
+        allow read: if isMember(gid);
+        allow write: if isAdmin(gid);
+      }
+      match /notices/{nid} {
+        allow read: if isMember(gid);
+        allow create: if isAdmin(gid) && request.resource.data.by == me();
+        allow delete: if isAdmin(gid);
+      }
+      match /messages/{mid} {
+        allow read: if isMember(gid);
+        allow create: if isMember(gid) && request.resource.data.from == me();
+        allow delete: if isAdmin(gid) || resource.data.from == me();
+      }
+    }
+
+    match /dms/{dmId} {
+      allow read: if signedIn() && resource == null;
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn() && me() in request.resource.data.members;
+      allow update: if signedIn() && me() in resource.data.members && request.resource.data.members == resource.data.members;
+      match /messages/{mid} {
+        allow read: if signedIn() && me() in get(/databases/$(database)/documents/dms/$(dmId)).data.members;
+        allow create: if signedIn() && request.resource.data.from == me()
+          && me() in get(/databases/$(database)/documents/dms/$(dmId)).data.members;
+      }
+    }
+
+    match /calls/{cid} {
+      allow read: if signedIn() && me() == resource.data.to;
+      allow read: if signedIn() && me() == resource.data.from;
+      allow create: if signedIn() && request.resource.data.from == me();
+      allow update: if signedIn() && (me() == resource.data.from || me() == resource.data.to);
+      match /ice/{iid} {
+        function call() { return get(/databases/$(database)/documents/calls/$(cid)).data; }
+        allow read, create: if signedIn() && (me() == call().from || me() == call().to);
+      }
+    }
+
+    // Files (photos, ID cards, PDFs) stored in Firestore, max ~900 KB each.
+    match /blobs/{bid} {
+      allow create: if signedIn() && request.resource.data.owner == me();
+      allow delete: if signedIn() && (resource.data.owner == me()
+        || (resource.data.scope in ['group', 'private'] && isAdmin(resource.data.groupId)));
+      allow read: if signedIn() && (
+        resource.data.owner == me()
+        || resource.data.scope == 'public'
+        || (resource.data.scope == 'group' && isMember(resource.data.groupId))
+        || (resource.data.scope == 'private' && (isAdmin(resource.data.groupId) || resource.data.subject == me()))
+        || (resource.data.scope == 'dm' && me() in get(/databases/$(database)/documents/dms/$(resource.data.groupId)).data.members)
+      );
+    }
+  }
+}
