@@ -71,7 +71,6 @@ import java.util.concurrent.TimeUnit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthScreen() {
-    var tab by remember { mutableIntStateOf(0) }
     Column(
         Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -79,13 +78,8 @@ fun AuthScreen() {
         Image(painterResource(R.drawable.logo), null, Modifier.size(110.dp))
         Text(APP_FULL_NAME, textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, fontSize = 17.sp,
             color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
-        Text("Register or log in", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-        PrimaryTabRow(selectedTabIndex = tab) {
-            Tab(tab == 0, { tab = 0 }, text = { Text("Phone number") }, icon = { Icon(Icons.Default.Phone, null) })
-            Tab(tab == 1, { tab = 1 }, text = { Text("Email") }, icon = { Icon(Icons.Default.Email, null) })
-        }
-        Spacer(Modifier.height(16.dp))
-        if (tab == 0) PhoneLogin() else EmailLogin()
+        Text("Register or log in with your email", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+        EmailLogin()
         Spacer(Modifier.height(32.dp))
         Text(DEVELOPER_NOTE, style = MaterialTheme.typography.bodySmall)
     }
@@ -171,12 +165,12 @@ private fun EmailLogin() {
                 runCatching {
                     if (register) Repo.auth.createUserWithEmailAndPassword(email, pass).await()
                     else Repo.auth.signInWithEmailAndPassword(email, pass).await()
-                }.onFailure { ctx.toast(it.message ?: "Failed") }
+                }.onFailure { ctx.toast(friendlyAuthError(it)) }
                 busy = false
             }
-        }, Modifier.fillMaxWidth()) { Text(if (register) "Create account" else "Log in") }
+        }, Modifier.fillMaxWidth().height(52.dp)) { Text(if (register) "Create account" else "Log in") }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton({ register = !register }) { Text(if (register) "Have an account? Log in" else "New? Register") }
+            TextButton({ register = !register }) { Text(if (register) "Already registered? Log in" else "New user? Create account") }
             if (!register) TextButton({
                 if (!email.contains("@")) { ctx.toast("Enter your email first"); return@TextButton }
                 scope.launch {
@@ -186,6 +180,20 @@ private fun EmailLogin() {
                 }
             }) { Text("Forgot password") }
         }
+    }
+}
+
+private fun friendlyAuthError(e: Throwable): String {
+    val m = e.message ?: ""
+    return when {
+        m.contains("already in use", true) -> "This email is already registered. Tap \"Already registered? Log in\"."
+        m.contains("badly formatted", true) -> "Please check the email address."
+        m.contains("password is invalid", true) || m.contains("credential is incorrect", true) || m.contains("INVALID_LOGIN", true) ->
+            "Wrong email or password. If you are new, tap \"New user? Create account\"."
+        m.contains("no user record", true) -> "No account with this email. Tap \"New user? Create account\"."
+        m.contains("network", true) -> "No internet connection. Please try again."
+        m.contains("at least 6", true) -> "Password must be at least 6 characters."
+        else -> m.ifBlank { "Something went wrong. Please try again." }
     }
 }
 
@@ -222,7 +230,7 @@ fun ProfileScreen(onDone: () -> Unit, firstTime: Boolean) {
             OutlinedTextField(name, { name = it }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(phone, { if (!phoneLocked) phone = it }, label = { Text("Mobile number") }, singleLine = true,
-                readOnly = phoneLocked, supportingText = { Text(if (phoneLocked) "Verified by OTP" else "So administrators can add you from their contacts") },
+                readOnly = phoneLocked, supportingText = { Text(if (phoneLocked) "Verified by OTP" else "Required, so administrators can add you from their contacts") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
             if (!authUser?.email.isNullOrBlank()) {
                 OutlinedTextField(authUser?.email ?: "", {}, label = { Text("Email") }, readOnly = true, modifier = Modifier.fillMaxWidth())
@@ -231,6 +239,7 @@ fun ProfileScreen(onDone: () -> Unit, firstTime: Boolean) {
             if (busy) CircularProgressIndicator()
             else Button({
                 if (name.isBlank()) { ctx.toast("Enter your name"); return@Button }
+                if (normalizePhone(phone).isBlank()) { ctx.toast("Enter your 10-digit mobile number"); return@Button }
                 busy = true
                 scope.launch {
                     runCatching { Repo.saveProfile(name, phone, photo) }
