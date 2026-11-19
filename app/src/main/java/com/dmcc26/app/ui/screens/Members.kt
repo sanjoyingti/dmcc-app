@@ -160,6 +160,14 @@ fun PccScreen(nav: NavController, gid: String, pid: String) {
 }
 
 @Composable
+private fun Detail(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(label, Modifier.width(120.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
 private fun Section(t: String) {
     Text(t, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
@@ -306,7 +314,21 @@ fun MemberScreen(nav: NavController, gid: String, uid: String) {
                     RoleBadge(m)
                 }
             }
-            if (m.phone.isNotBlank()) TextButton({ ctx.dial(m.phone) }) { Icon(Icons.Default.Phone, null); Spacer(Modifier.width(6.dp)); Text(m.phone) }
+            Spacer(Modifier.height(12.dp))
+            val pccName = pccs.firstOrNull { it.id == m.pccId }?.name ?: "Mandal level (no PCC)"
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Detail("Name", m.name)
+                    Detail("Designation", m.designation)
+                    Detail("PCC", pccName)
+                    Detail("Role in group", when (m.role) { "owner" -> "Administrator"; "admin" -> "Sub-administrator"; else -> "Member" })
+                    Detail("Mobile", m.phone.ifBlank { profile?.phone ?: "" }.ifBlank { "—" })
+                    Detail("Email", profile?.email?.ifBlank { "—" } ?: "—")
+                    Detail("Member since", if (m.addedAt > 0) java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(m.addedAt)) else "—")
+                }
+            }
+            val phone = m.phone.ifBlank { profile?.phone ?: "" }
+            if (phone.isNotBlank()) TextButton({ ctx.dial(phone) }) { Icon(Icons.Default.Phone, null); Spacer(Modifier.width(6.dp)); Text("Phone call $phone") }
             if (!isMe) {
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

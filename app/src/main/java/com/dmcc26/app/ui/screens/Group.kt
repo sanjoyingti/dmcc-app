@@ -19,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonAdd
@@ -151,13 +153,13 @@ fun GroupScreen(nav: NavController, gid: String) {
                 if (isAdmin) Text("Invite code: ${g.inviteCode}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             PrimaryTabRow(selectedTabIndex = tab) {
-                Tab(tab == 0, { tab = 0 }, text = { Text("PCC (${pccs.size})") })
-                Tab(tab == 1, { tab = 1 }, text = { Text("Members (${members.size})") })
+                Tab(tab == 0, { tab = 0 }, text = { Text("All Members (${members.size})") })
+                Tab(tab == 1, { tab = 1 }, text = { Text("PCC-wise (${pccs.size})") })
                 Tab(tab == 2, { tab = 2 }, text = { Text("Notices") })
             }
             when (tab) {
-                0 -> PccList(nav, gid, pccs, members, isAdmin) { addPcc = true }
-                1 -> AllMembers(nav, gid, members, pccs)
+                0 -> AllMembers(nav, gid, members, pccs)
+                1 -> PccList(nav, gid, pccs, members, isAdmin) { addPcc = true }
                 else -> Column(Modifier.fillMaxSize()) {
                     if (isAdmin) Button({ nav.navigate("newnotice?gid=$gid") }, Modifier.fillMaxWidth().padding(12.dp)) {
                         Icon(Icons.Default.Campaign, null); Spacer(Modifier.width(8.dp)); Text("Send notice to all members")
@@ -190,33 +192,52 @@ private fun GroupNotices(g: Group) {
 
 @Composable
 private fun PccList(nav: NavController, gid: String, pccs: List<Pcc>, members: List<Member>, isAdmin: Boolean, onAdd: () -> Unit) {
+    // Which PCC sections are open. Tap a PCC name to show / hide its members.
+    var open by remember { mutableStateOf(setOf<String>()) }
+    val byRank = compareBy<Member>({ designationRank(it.designation) }, { it.name.lowercase() })
+    val noPcc = members.filter { it.pccId.isBlank() || pccs.none { p -> p.id == it.pccId } }.sortedWith(byRank)
+    val sections = pccs.map { p -> Triple(p.id, p.name, members.filter { it.pccId == p.id }.sortedWith(byRank)) } +
+        (if (noPcc.isNotEmpty()) listOf(Triple("", "Mandal level (no PCC)", noPcc)) else emptyList())
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        item {
+            Text("Tap a PCC to see its members.", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+        }
         if (pccs.isEmpty()) item {
             EmptyNote("No Primary Congress Committees yet.")
             if (isAdmin) Button(onAdd, Modifier.fillMaxWidth()) { Text("Add first PCC (village)") }
         }
-        items(pccs, key = { it.id }) { p ->
-            val inPcc = members.filter { it.pccId == p.id }
-            val president = inPcc.firstOrNull { it.designation == "President" }
-            Card(
-                Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { nav.navigate("pcc/$gid/${p.id}") },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Groups, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(p.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                        Text("President: ${president?.name ?: "not set"}", style = MaterialTheme.typography.bodyMedium)
+        sections.forEachIndexed { i, (id, name, list) ->
+            val isOpen = id in open
+            item(key = "h$id") {
+                val president = list.firstOrNull { it.designation == "President" }
+                Card(
+                    Modifier.fillMaxWidth().padding(top = 8.dp).clickable { open = if (isOpen) open - id else open + id },
+                    colors = CardDefaults.cardColors(containerColor = if (isOpen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (id.isBlank()) "•" else "${i + 1}.", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            if (id.isNotBlank()) Text("President: ${president?.name ?: "not set"}", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        AssistChip({ open = if (isOpen) open - id else open + id }, { Text("${list.size} members") })
+                        Icon(if (isOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (isOpen) "Hide" else "Show")
                     }
-                    AssistChip({ nav.navigate("pcc/$gid/${p.id}") }, { Text("${inPcc.size} members") })
+                }
+            }
+            if (isOpen) {
+                if (list.isEmpty()) item(key = "e$id") { EmptyNote("No members in $name yet.") }
+                items(list, key = { "m$id" + it.uid }) { m -> MemberRow(m, "") { nav.navigate("member/$gid/${m.uid}") } }
+                if (id.isNotBlank()) item(key = "o$id") {
+                    TextButton({ nav.navigate("pcc/$gid/$id") }, Modifier.fillMaxWidth()) {
+                        Text(if (isAdmin) "Open $name page (summary, add member, rename)" else "Open $name page (summary)")
+                    }
                 }
             }
         }
-        val noPcc = members.filter { it.pccId.isBlank() || pccs.none { p -> p.id == it.pccId } }
-        if (noPcc.isNotEmpty()) item {
-            Text("Mandal level (not in a PCC): ${noPcc.size}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(vertical = 12.dp))
-        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
