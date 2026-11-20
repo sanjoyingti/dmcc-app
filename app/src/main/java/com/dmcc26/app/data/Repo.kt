@@ -200,9 +200,9 @@ object Repo {
 
     // ---------- invites ----------
     fun inviteText(groupName: String, code: String): String {
-        val dl = if (BuildConfig.REPO.isNotBlank()) "https://github.com/${BuildConfig.REPO}/releases/latest" else "(ask the administrator for the app)"
+        val dl = if (BuildConfig.REPO.isNotBlank()) "https://github.com/${BuildConfig.REPO}/releases/latest/download/26-DMCC.apk" else "(ask the administrator for the app)"
         return "You are invited to join \"$groupName\" on the $APP_SHORT_NAME app ($APP_FULL_NAME).\n\n" +
-            "1. Install the app: $dl  (download 26-DMCC.apk)\n" +
+            "1. Download and install the app: $dl\n" +
             "2. Register with your mobile number or email.\n" +
             "3. Tap Join group and enter code: $code\n\n" +
             "Or open: dmcc26://join/$code"

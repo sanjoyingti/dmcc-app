@@ -7,6 +7,13 @@ plugins {
 
 val appPackage = "com.dmcc26.app"
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+// Always-increasing version code set by the build workflow (minutes since Nov 2023), so every
+// new build can install over the old one. Falls back to the run number for local builds.
+val buildVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: runNumber
+// The same signing key must be used for every release, or phones can't update without uninstalling.
+if (System.getenv("CI") == "true" && !file("signing.keystore").exists()) {
+    throw GradleException("app/signing.keystore is missing. Never build a release without it: updates would fail to install.")
+}
 val repoSlug = System.getenv("GITHUB_REPOSITORY") ?: ""
 
 // Reads app/google-services.json (from your own Firebase project) without the google-services plugin.
@@ -41,7 +48,7 @@ android {
         applicationId = appPackage
         minSdk = 26
         targetSdk = 37
-        versionCode = runNumber
+        versionCode = buildVersionCode
         versionName = "1.0.$runNumber"
         firebase?.forEach { (k, v) -> resValue("string", k, v) }
         buildConfigField("boolean", "FIREBASE_READY", (firebase != null).toString())

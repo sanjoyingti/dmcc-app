@@ -87,6 +87,20 @@ data class UpdateInfo(val versionCode: Int, val versionName: String, val apkUrl:
 object Updates {
     suspend fun check(repo: String): UpdateInfo? = kotlinx.coroutines.withContext(Dispatchers.IO) {
         if (repo.isBlank()) return@withContext null
+        // 1) version.json attached to the latest release (no GitHub API limits)
+        runCatching {
+            val v = URL("https://github.com/$repo/releases/latest/download/version.json").openConnection() as HttpURLConnection
+            v.connectTimeout = 15000
+            v.readTimeout = 15000
+            try {
+                if (v.responseCode == 200) {
+                    val j = JSONObject(v.inputStream.bufferedReader().readText())
+                    return@withContext UpdateInfo(j.getInt("versionCode"), j.optString("versionName"), j.optString("apk"),
+                        "https://github.com/$repo/releases/latest", j.optString("notes"))
+                }
+            } finally { v.disconnect() }
+        }
+        // 2) fallback: GitHub API
         val c = URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection
         c.setRequestProperty("Accept", "application/vnd.github+json")
         c.connectTimeout = 15000

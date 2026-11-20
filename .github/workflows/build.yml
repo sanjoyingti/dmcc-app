@@ -32,7 +32,12 @@ jobs:
               [ -n "$v" ] && echo "::notice::$p latest $v"
             done
           done
+      - name: Version number (always increases)
+        id: ver
+        run: echo "code=$(( ($(date +%s) - 1700000000) / 60 ))" >> "$GITHUB_OUTPUT"
       - name: Build debug APK
+        env:
+          VERSION_CODE: ${{ steps.ver.outputs.code }}
         run: |
           set -o pipefail
           gradle assembleDebug --stacktrace 2>&1 | tee build.log
@@ -42,15 +47,45 @@ jobs:
           grep -E "^e: |error:|What went wrong|Could not resolve|Could not find|FAILURE" -A2 build.log | head -60 | while IFS= read -r l; do
             echo "::error::${l//%/%25}"
           done
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk 26-DMCC.apk
+      - name: Check signing key is unchanged (so updates install over the old app)
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          CERT=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA-256 digest" | head -1 | awk '{print $NF}')
+          echo "Signing certificate SHA-256: $CERT"
+          if [ "$CERT" != "270322e74dedb5d8116b248226cda4768aa9258da30493b1db172144f1027f8e" ]; then
+            echo "::error::The APK is signed with a different key. Phones could not update. Release stopped."
+            exit 1
+          fi
+      - name: Rename APK and write version.json
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          CODE: ${{ steps.ver.outputs.code }}
+          RUN: ${{ github.run_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk 26-DMCC.apk
+          python3 - <<'PY'
+          import json, os
+          msg = "\n".join(l for l in (os.environ.get("MSG") or "").splitlines()
+                          if l.strip() and not l.startswith(("Co-Authored-By", "Claude-Session")))
+          run = os.environ["RUN"]
+          json.dump({
+              "versionCode": int(os.environ["CODE"]),
+              "versionName": f"1.0.{run}",
+              "apk": f"https://github.com/{os.environ['REPO']}/releases/download/v1.0.{run}/26-DMCC.apk",
+              "notes": msg,
+          }, open("version.json", "w"))
+          PY
+          cat version.json
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: 26-DMCC v1.0.${{ github.run_number }}
           body: |
-            versionCode=${{ github.run_number }}
+            versionCode=${{ steps.ver.outputs.code }}
             What's new: ${{ github.event.head_commit.message }}
           target_commitish: ${{ github.sha }}
-          files: 26-DMCC.apk
+          files: |
+            26-DMCC.apk
+            version.json
           make_latest: true
