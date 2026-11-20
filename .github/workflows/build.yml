@@ -48,7 +48,9 @@ jobs:
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: 26-DMCC v1.0.${{ github.run_number }}
-          body: "versionCode=${{ github.run_number }}"
+          body: |
+            versionCode=${{ github.run_number }}
+            What's new: ${{ github.event.head_commit.message }}
           target_commitish: ${{ github.sha }}
           files: 26-DMCC.apk
           make_latest: true

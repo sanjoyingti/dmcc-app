@@ -81,7 +81,7 @@ class NoticeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     }
 }
 
-data class UpdateInfo(val versionCode: Int, val versionName: String, val apkUrl: String, val pageUrl: String)
+data class UpdateInfo(val versionCode: Int, val versionName: String, val apkUrl: String, val pageUrl: String, val notes: String = "")
 
 /** Checks the GitHub releases of this app's repo for a newer build. */
 object Updates {
@@ -104,10 +104,74 @@ object Updates {
                 val a = assets.getJSONObject(i)
                 if (a.optString("name").endsWith(".apk")) { apk = a.optString("browser_download_url"); break }
             }
-            UpdateInfo(code, tag.removePrefix("v"), apk, j.optString("html_url"))
+            val notes = body.lines().map { it.trim() }
+                .filter { it.isNotBlank() && !it.startsWith("versionCode=") && !it.startsWith("Co-Authored-By") && !it.startsWith("Claude-Session") }
+                .joinToString("\n").removePrefix("What's new:").trim()
+            UpdateInfo(code, tag.removePrefix("v"), apk, j.optString("html_url"), notes)
         } finally {
             c.disconnect()
         }
+    }
+
+    /** Downloads the new APK into the app's own storage, reporting progress 0..1. */
+    suspend fun download(ctx: Context, info: UpdateInfo, onProgress: (Float) -> Unit): java.io.File = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        if (info.apkUrl.isBlank()) error("No download found for this version")
+        val dir = java.io.File(ctx.cacheDir, "updates").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val out = java.io.File(dir, "26-DMCC-${info.versionName}.apk")
+        var url = URL(info.apkUrl)
+        var c: HttpURLConnection
+        var hops = 0
+        while (true) {
+            c = url.openConnection() as HttpURLConnection
+            c.instanceFollowRedirects = false
+            c.connectTimeout = 20000
+            c.readTimeout = 30000
+            val code = c.responseCode
+            if (code in 300..399 && hops < 5) {
+                url = URL(url, c.getHeaderField("Location"))
+                c.disconnect(); hops++; continue
+            }
+            if (code != 200) error("Download failed ($code)")
+            break
+        }
+        try {
+            val total = c.contentLengthLong
+            var done = 0L
+            c.inputStream.use { input ->
+                out.outputStream().use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        o.write(buf, 0, n)
+                        done += n
+                        if (total > 0) onProgress(done.toFloat() / total)
+                    }
+                }
+            }
+        } finally {
+            c.disconnect()
+        }
+        out
+    }
+
+    /** True if Android lets this app install updates (the "Install unknown apps" switch). */
+    fun canInstall(ctx: Context) = android.os.Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()
+
+    /** Opens the Android setting where the user allows this app to install updates. */
+    fun openInstallPermission(ctx: Context) {
+        val i = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:" + ctx.packageName))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { ctx.startActivity(i) }
+    }
+
+    /** Shows Android's install screen for the downloaded APK. */
+    fun install(ctx: Context, apk: java.io.File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".files", apk)
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(i)
     }
 
     fun openDownload(ctx: Context, info: UpdateInfo) {

@@ -80,6 +80,14 @@ fun HomeScreen(nav: NavController, startTab: Int) {
     var tab by rememberSaveable { mutableIntStateOf(startTab) }
     val groups by remember { Repo.myGroupsFlow() }.collectAsState(initial = null)
     val titles = listOf(APP_SHORT_NAME, "Chats", "Notices", "More")
+    var autoUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    LaunchedEffect(Unit) {
+        if (!AutoUpdateCheck.done) {
+            AutoUpdateCheck.done = true
+            runCatching { Updates.check(BuildConfig.REPO) }.getOrNull()?.let { if (it.versionCode > BuildConfig.VERSION_CODE) autoUpdate = it }
+        }
+    }
+    autoUpdate?.let { u -> com.dmcc26.app.ui.UpdateDialog(u) { autoUpdate = null } }
     Scaffold(
         topBar = { Bar(titles[tab], subtitle = if (tab == 0) "Duarbagori Mandal Congress Committee" else "") },
         bottomBar = {
@@ -208,12 +216,13 @@ private fun MoreTab(nav: NavController) {
     var update by remember { mutableStateOf<UpdateInfo?>(null) }
     var noUpdate by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
+    var showUpdate by remember { mutableStateOf(false) }
 
     fun check() {
         checking = true
         scope.launch {
             runCatching { Updates.check(BuildConfig.REPO) }
-                .onSuccess { u -> if (u != null && u.versionCode > BuildConfig.VERSION_CODE) update = u else noUpdate = true }
+                .onSuccess { u -> if (u != null && u.versionCode > BuildConfig.VERSION_CODE) { update = u; showUpdate = true } else noUpdate = true }
                 .onFailure { ctx.toast("Couldn't check for updates: ${it.message}") }
             checking = false
         }
@@ -237,7 +246,7 @@ private fun MoreTab(nav: NavController) {
             headlineContent = { Text("Check for updates") },
             supportingContent = { Text(if (update != null) "New version ${update!!.versionName} available" else "Installed version ${BuildConfig.VERSION_NAME}") },
             trailingContent = { if (checking) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) },
-            modifier = Modifier.clickable { if (update != null) Updates.openDownload(ctx, update!!) else check() },
+            modifier = Modifier.clickable { if (update != null) showUpdate = true else check() },
         )
         ListItem(
             leadingContent = { Icon(Icons.Default.Info, null) },
@@ -248,6 +257,7 @@ private fun MoreTab(nav: NavController) {
             modifier = Modifier.clickable { confirmLogout = true })
         Spacer(Modifier.height(24.dp))
     }
+    if (showUpdate && update != null) com.dmcc26.app.ui.UpdateDialog(update!!) { showUpdate = false }
     if (noUpdate) AlertDialog({ noUpdate = false }, { TextButton({ noUpdate = false }) { Text("OK") } },
         title = { Text("Up to date") }, text = { Text("You have the latest version (${BuildConfig.VERSION_NAME}).") })
     if (confirmLogout) AlertDialog({ confirmLogout = false },
@@ -255,3 +265,6 @@ private fun MoreTab(nav: NavController) {
         dismissButton = { TextButton({ confirmLogout = false }) { Text("Cancel") } },
         title = { Text("Log out?") })
 }
+
+/** Checks for a new version once each time the app is opened. */
+private object AutoUpdateCheck { var done = false }
